@@ -1,0 +1,2 @@
+# Haruki-eitango.com
+Ainki
