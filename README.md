@@ -7,8 +7,8 @@
     <style>
         :root {
             --bg-0: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            --correct-flash: rgba(40, 167, 69, 0.15);
-            --incorrect-flash: rgba(220, 53, 69, 0.15);
+            --correct-flash: #e2f4e8;
+            --incorrect-flash: #fde8e8;
         }
 
         body {
@@ -21,7 +21,7 @@
             margin: 0;
             padding: 20px;
             box-sizing: border-box;
-            transition: background 0.4s ease;
+            transition: background 0.3s ease;
         }
 
         /* 画面フラッシュ演出用 */
@@ -351,7 +351,7 @@
     <div class="category-select-box">
         <label class="select-label">📚 出題カテゴリ選択</label>
         <select id="category-filter" class="custom-select">
-            <option value="all">すべての単語 (全50語)</option>
+            <option value="all">すべての単語</option>
             <option value="verb">動詞のみ</option>
             <option value="adj">形容詞・その他</option>
             <option value="difficult">難関重要レベル</option>
@@ -440,4 +440,232 @@
         { word: "ambiguous", options: ["あいまいな", "明確な", "野心的な", "不吉な"], answer: "あいまいな", hint: "複数の解釈ができて、はっきりしない様子。", goro: "「あんびな」誘惑はいつもあいまいな態度から", ex_en: "His ambiguous answer confused everyone.", ex_ja: "彼のあいまいな返事はみんなを混乱させた。", type: "adj", tag: "difficult" },
         { word: "appropriate", options: ["適切な・ふさわしい", "高価な", "違法な", "否定的な"], answer: "適切な・ふさわしい", hint: "目的や状況にぴったり合っている状態。", goro: "「アップロードに適切な」画像を選ぶ", ex_en: "Please wear appropriate clothes for the interview.", ex_ja: "面接に適切な服装をしてください。", type: "adj", tag: "standard" },
         { word: "artificial", options: ["人工的な", "芸術的な", "誠実な", "原始的な"], answer: "人工的な", hint: "自然ではなく、人間の手によって作られたもの。", goro: "「味、不自然」な人工的な甘味料", ex_en: "The flowers are made of artificial silk.", ex_ja: "その花は人工のシルクで作られている。", type: "adj", tag: "standard" },
-        { word: "crucial", options: ["決定的な・極めて重要な", "些細な", "残酷な", "退屈な"], answer: "決定的な・極めて重要な", hint: "運命を分けるほど極めて重要不可欠な様子。", goro: "「狂う、猿」にはバナナが極めて重要だ", ex_en: "Vitamin C plays a crucial role in health.", ex_ja: "ビタミン
+        { word: "crucial", options: ["決定的な・極めて重要な", "些細な", "残酷な", "退屈な"], answer: "決定的な・極めて重要な", hint: "運命を分けるほど極めて重要不可欠な様子。", goro: "「狂う、猿」にはバナナが極めて重要だ", ex_en: "Vitamin C plays a crucial role in health.", ex_ja: "ビタミンCは健康に決定的な役割を果たす。", type: "adj", tag: "difficult" }
+    ];
+
+    // 状態管理変数
+    let quizQueue = [];
+    let currentQuestionIndex = 0;
+    let score = 0;
+    let isAnswered = false;
+
+    // ローカルストレージ用キー
+    const STORAGE_TOTAL = "vocab_total_answers";
+    let currentStreak = 0; // セッション連勝
+    let weakWords = JSON.parse(localStorage.getItem("vocab_weak_words")) || [];
+
+    // 初期化処理
+    window.onload = function() {
+        updateStatsDisplay();
+        updateCategoryOptionCount();
+    };
+
+    function updateCategoryOptionCount() {
+        const select = document.getElementById("category-filter");
+        select.options[0].text = `すべての単語 (全${baseVocabulary.length}語)`;
+    }
+
+    function updateStatsDisplay() {
+        const total = localStorage.getItem(STORAGE_TOTAL) || 0;
+        document.getElementById("stat-total").innerText = total;
+        document.getElementById("stat-streak").innerText = currentStreak;
+        
+        const weakBadge = document.getElementById("weak-count-badge");
+        weakBadge.innerText = `${weakWords.length}語`;
+        
+        const weakBtn = document.getElementById("weak-mode-btn");
+        if(weakWords.length === 0) {
+            weakBtn.classList.add("disabled");
+        } else {
+            weakBtn.classList.remove("disabled");
+        }
+    }
+
+    // クイズ開始処理（通常モード）
+    function startQuizMode(limit) {
+        const filterValue = document.getElementById("category-filter").value;
+        let filtered = baseVocabulary;
+
+        if (filterValue === "verb") {
+            filtered = baseVocabulary.filter(item => item.type === "verb");
+        } else if (filterValue === "adj") {
+            filtered = baseVocabulary.filter(item => item.type === "adj");
+        } else if (filterValue === "difficult") {
+            filtered = baseVocabulary.filter(item => item.tag === "difficult");
+        }
+
+        if(filtered.length === 0) {
+            alert("該当する単語がありません。");
+            return;
+        }
+
+        document.getElementById("mode-text").innerText = `通常モード (${limit}問)`;
+        setupQueue(filtered, limit);
+    }
+
+    // クイズ開始処理（弱点克服モード）
+    function startWeakQuizMode() {
+        if(weakWords.length === 0) return;
+        
+        const filtered = baseVocabulary.filter(item => weakWords.includes(item.word));
+        document.getElementById("mode-text").innerText = "弱点克服モード";
+        setupQueue(filtered, filtered.length);
+    }
+
+    function setupQueue(wordsArray, limit) {
+        // シャッフル
+        let shuffled = [...wordsArray].sort(() => 0.5 - Math.random());
+        quizQueue = shuffled.slice(0, limit);
+        
+        currentQuestionIndex = 0;
+        score = 0;
+        
+        document.getElementById("menu-card").style.display = "none";
+        document.getElementById("quiz-card").style.display = "block";
+        
+        showQuestion();
+    }
+
+    // 問題表示
+    function showQuestion() {
+        isAnswered = false;
+        document.body.className = ""; // フラッシュリセット
+        document.getElementById("result").innerText = "";
+        document.getElementById("explanation").style.display = "none";
+        document.getElementById("next-btn").style.display = "none";
+
+        const currentData = quizQueue[currentQuestionIndex];
+        
+        // 進捗アップデート
+        document.getElementById("progress-text").innerText = `第 ${currentQuestionIndex + 1} 問 / 全 ${quizQueue.length} 問`;
+        document.getElementById("score-text").innerText = `スコア: ${score}`;
+        const percent = ((currentQuestionIndex) / quizQueue.length) * 100;
+        document.getElementById("progress-fill").style.width = `${percent}%`;
+
+        // 単語セット
+        document.getElementById("word").innerText = currentData.word;
+        
+        // オプション生成
+        const optionsContainer = document.getElementById("options");
+        optionsContainer.innerHTML = "";
+        
+        currentData.options.forEach(opt => {
+            const btn = document.createElement("button");
+            btn.className = "option-btn";
+            btn.innerText = opt;
+            btn.onclick = () => checkAnswer(btn, opt, currentData.answer);
+            optionsContainer.appendChild(btn);
+        });
+
+        // 自動音声読み上げ（お好みで有効化）
+        speakWord(currentData.word);
+    }
+
+    // 判定処理
+    function checkAnswer(selectedBtn, selectedOpt, correctOpt) {
+        if(isAnswered) return;
+        isAnswered = true;
+
+        const currentData = quizQueue[currentQuestionIndex];
+        const optionButtons = document.querySelectorAll(".option-btn");
+        
+        // 総解答数のインクリメント
+        let total = parseInt(localStorage.getItem(STORAGE_TOTAL) || 0);
+        localStorage.setItem(STORAGE_TOTAL, total + 1);
+
+        if(selectedOpt === correctOpt) {
+            score++;
+            currentStreak++;
+            selectedBtn.classList.add("btn-correct-ans");
+            document.getElementById("result").innerHTML = "<span class='correct'>⭕ 正解！</span>";
+            document.body.classList.add("flash-correct");
+            
+            // 弱点リストから削除（一度正解したら克服とみなす場合）
+            weakWords = weakWords.filter(w => w !== currentData.word);
+        } else {
+            currentStreak = 0;
+            selectedBtn.classList.add("btn-incorrect-ans");
+            document.getElementById("result").innerHTML = "<span class='incorrect'>❌ 不正解...</span>";
+            document.body.classList.add("flash-incorrect");
+            
+            // 正解ボタンをハイライト
+            optionButtons.forEach(btn => {
+                if(btn.innerText === correctOpt) {
+                    btn.classList.add("btn-correct-ans");
+                }
+            });
+
+            // 弱点リストに追加
+            if(!weakWords.includes(currentData.word)) {
+                weakWords.push(currentData.word);
+            }
+        }
+
+        // 弱点を保存
+        localStorage.setItem("vocab_weak_words", JSON.stringify(weakWords));
+        updateStatsDisplay();
+
+        // ボタンの無効化
+        optionButtons.forEach(btn => btn.disabled = true);
+
+        // 解説の表示
+        showExplanation(currentData);
+    }
+
+    // 解説カードの中身を埋めて表示
+    function showExplanation(data) {
+        document.getElementById("exp-text").innerText = data.hint;
+        document.getElementById("exp-goro").innerText = data.goro;
+        document.getElementById("exp-ex-en").innerText = data.ex_en;
+        document.getElementById("exp-ex-ja").innerText = data.ex_ja;
+        
+        document.getElementById("speaker-ex-btn").onclick = () => speakWord(data.ex_en);
+        document.getElementById("explanation").style.display = "block";
+        
+        // ボタン文言変更
+        const nextBtn = document.getElementById("next-btn");
+        if(currentQuestionIndex === quizQueue.length - 1) {
+            nextBtn.innerText = "結果を見る";
+        } else {
+            nextBtn.innerText = "次の問題へ";
+        }
+        nextBtn.style.display = "block";
+    }
+
+    // 次の目的地（問題 or 結果）への遷移
+    function nextQuestion() {
+        if(currentQuestionIndex < quizQueue.length - 1) {
+            currentQuestionIndex++;
+            showQuestion();
+        } else {
+            // プログレスバーを100%にする演出
+            document.getElementById("progress-fill").style.width = "100%";
+            alert(`チャレンジ終了！\nあなたのスコア: ${score} / ${quizQueue.length}`);
+            backToMenu();
+        }
+    }
+
+    // メニューへ戻る
+    function backToMenu() {
+        document.body.className = "";
+        document.getElementById("quiz-card").style.display = "none";
+        document.getElementById("menu-card").style.display = "block";
+        updateStatsDisplay();
+    }
+
+    // 音声合成機能
+    function speakWord(text) {
+        if ('speechSynthesis' in window) {
+            // 再生中の音声をクリア
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'en-US';
+            utterance.rate = 0.9; // 若干聞き取りやすいように少しだけゆっくり
+            window.speechSynthesis.speak(utterance);
+        }
+    }
+</script>
+
+</body>
+</html>
